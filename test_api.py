@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-# test_api.py
+# A simple test script to make sure our API is working properly
 
 import requests
 import json
 
 def test_backend_connection():
-    """Test if the backend is running and responding"""
+    """Let's see if our backend is running and responding to requests"""
     try:
         response = requests.get('http://localhost:5001/test')
         if response.status_code == 200:
-            print("✅ Backend connection successful")
+            print("✅ Great! Backend connection is working")
             print(f"Response: {response.json()}")
             return True
         else:
@@ -23,12 +23,12 @@ def test_backend_connection():
         return False
 
 def test_health_endpoint():
-    """Test the health endpoint"""
+    """Check if our models are loaded and everything is healthy"""
     try:
         response = requests.get('http://localhost:5001/health')
         if response.status_code == 200:
             data = response.json()
-            print("✅ Health check successful")
+            print("✅ Health check passed!")
             print(f"Status: {data['status']}")
             print(f"Models loaded: {data['models_loaded']}")
             return data['models_loaded']
@@ -40,23 +40,23 @@ def test_health_endpoint():
         return False
 
 if __name__ == "__main__":
-    print("Testing Gender Detection API...")
+    print("Testing our Gender Detection API...")
     print("=" * 40)
     
-    # Test backend connection
+    # First, let's test if the backend is running
     if test_backend_connection():
-        # Test health endpoint
+        # Then check if the models are loaded properly
         models_loaded = test_health_endpoint()
         
         if models_loaded:
-            print("\n🎉 All tests passed! The API is ready to use.")
+            print("\n🎉 Awesome! All tests passed! The API is ready to use.")
             print("\nYou can now:")
             print("1. Open http://localhost:5001 in your browser for the simple interface")
             print("2. Start the React frontend with: cd frontend && npm start")
             print("3. Use the API endpoint: POST http://localhost:5001/api/detect")
         else:
-            print("\n⚠️  Backend is running but models are not loaded properly.")
+            print("\n⚠️  The backend is running but the models aren't loaded properly.")
             print("Check the server logs for model loading errors.")
     else:
-        print("\n❌ Backend is not running.")
+        print("\n❌ The backend isn't running.")
         print("Start the server with: python server.py") 

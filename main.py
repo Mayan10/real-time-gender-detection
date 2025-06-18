@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# main.py
+# Our main command-line interface for gender detection
 
 import os
 import sys
@@ -8,7 +8,7 @@ import cv2
 from src.detector import GenderDetector
 
 def check_camera_availability(camera_index):
-    """Test if the camera at the given index is available"""
+    """Let's see if the camera at this index is available and working"""
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         return False
@@ -36,64 +36,64 @@ def main():
     
     args = parser.parse_args()
     
-    # List available cameras if requested
+    # If they want to see what cameras are available, let's show them
     if args.list_cameras:
-        print("Checking available cameras:")
+        print("Let me check what cameras you have available:")
         for i in range(10):  # Check camera indices 0-9
             if check_camera_availability(i):
                 print(f"Camera index {i} is available")
         return 0
     
-    # Set OpenCV to use Metal on macOS
+    # On macOS, let's try to use Metal for better performance
     if not args.cpu:
         try:
             # Try to enable Metal backend for OpenCV on macOS
             cv2.ocl.setUseOpenCL(True)
             if cv2.ocl.haveOpenCL():
                 cv2.ocl.useOpenCL()
-                print("OpenCV is using OpenCL acceleration (Metal on macOS)")
+                print("Great! OpenCV is using OpenCL acceleration (Metal on macOS)")
             else:
-                print("OpenCL is not available, falling back to CPU")
+                print("OpenCL isn't available, so we'll use the CPU instead")
         except Exception as e:
-            print(f"Failed to enable Metal acceleration: {e}")
-            print("Falling back to CPU")
+            print(f"Couldn't enable Metal acceleration: {e}")
+            print("No worries, we'll use the CPU instead")
     
     # Convert string "0" to integer 0 for webcam
     video_source = args.video
     if video_source.isdigit():
         video_source = int(video_source)
     
-    # Check camera availability if using webcam
+    # Make sure the camera is actually available if we're trying to use one
     if isinstance(video_source, int):
         if not check_camera_availability(video_source):
-            print(f"Error: Camera at index {video_source} is not available.")
-            print("Possible solutions:")
+            print(f"Oops! Camera at index {video_source} isn't available.")
+            print("Here are some things to try:")
             print("1. Check camera permissions in System Preferences > Security & Privacy > Privacy > Camera")
             print("2. Close other applications that might be using the camera")
             print("3. Try a different camera index with --video <index>")
-            print("4. Run with --list-cameras to see available cameras")
+            print("4. Run with --list-cameras to see what cameras are available")
             return 1
     
     try:
-        # Initialize gender detector
+        # Let's create our gender detector
         detector = GenderDetector(
             confidence_threshold=args.confidence,
             use_cuda=not args.cpu
         )
         
-        # Run detection on video source
+        # Now let's run it on the video source
         detector.run_on_video(video_source)
         
     except FileNotFoundError as e:
-        print(f"Error: {e}")
+        print(f"Uh oh! {e}")
         print("Make sure you've downloaded the required model files.")
         print("Run: python scripts/download_models.py --yolo")
         return 1
     except KeyboardInterrupt:
-        print("Interrupted by user")
+        print("You interrupted the program - no problem!")
         return 0
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Something went wrong: {e}")
         import traceback
         traceback.print_exc()
         return 1
@@ -101,7 +101,7 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    # On macOS, explicitly set environment variable to enable camera permissions dialog
+    # On macOS, we need to set some environment variables to make camera permissions work properly
     if sys.platform == 'darwin':
         os.environ['OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS'] = '0'
         os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'

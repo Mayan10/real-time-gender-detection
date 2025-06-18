@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 
-// API endpoint - change this for production
+// Where our backend API lives - change this when you deploy to production
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001'
 
 export default function App() {
@@ -15,14 +15,14 @@ export default function App() {
   const contextRef = useRef(null)
   const detectingRef = useRef(false)
 
-  // Initialize canvas context
+  // Set up our canvas for capturing video frames
   useEffect(() => {
     canvasRef.current.width = 640
     canvasRef.current.height = 480
     contextRef.current = canvasRef.current.getContext('2d')
   }, [])
 
-  // Test backend connection
+  // Let's check if our backend is running
   useEffect(() => {
     fetch(`${API_BASE_URL}/test`)
       .then(response => response.json())
@@ -40,6 +40,7 @@ export default function App() {
     if (!videoRef.current || !contextRef.current) return null
 
     try {
+      // Draw the current video frame onto our canvas
       contextRef.current.drawImage(videoRef.current, 0, 0, 640, 480)
       return await new Promise((resolve) => {
         canvasRef.current.toBlob(resolve, 'image/jpeg', 0.8)
@@ -56,16 +57,18 @@ export default function App() {
     }
 
     try {
-      // Check if video is playing
+      // Make sure the video is actually playing
       if (videoRef.current.readyState === 4 && !videoRef.current.paused) {
         const blob = await captureFrame()
         if (!blob) {
           throw new Error('Failed to capture frame')
         }
 
+        // Prepare the image data to send to our backend
         const formData = new FormData()
         formData.append('image', blob)
 
+        // Send the image to our backend for analysis
         const response = await fetch(`${API_BASE_URL}/api/detect`, {
           method: 'POST',
           body: formData,
@@ -78,7 +81,7 @@ export default function App() {
         const data = await response.json()
         console.log('Detection result:', data)
         
-        // Update results with the new detection data
+        // Update our results with what the backend found
         setResults(data.results || [])
       }
     } catch (err) {
@@ -86,7 +89,7 @@ export default function App() {
       setError(err.message)
     }
 
-    // Schedule next detection
+    // Schedule the next detection (we do this every second)
     if (detectingRef.current) {
       setTimeout(() => {
         if (detectingRef.current) {
@@ -118,11 +121,12 @@ export default function App() {
     try {
       console.log('Requesting camera access...')
 
+      // Ask the browser for permission to use the camera
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           width: 640,
           height: 480,
-          facingMode: "user"
+          facingMode: "user"  // Use the front-facing camera
         } 
       })
 
@@ -132,14 +136,14 @@ export default function App() {
         videoRef.current.srcObject = stream
         streamRef.current = stream
         
-        // Wait for video to be ready
+        // Wait for the video to be ready to play
         videoRef.current.onloadedmetadata = () => {
           console.log('Video metadata loaded')
           videoRef.current.play()
             .then(() => {
               console.log('Video playback started')
               setIsStreaming(true)
-              // Start detection after ensuring video is playing
+              // Start detection after making sure the video is playing
               setTimeout(() => {
                 if (videoRef.current && !videoRef.current.paused) {
                   startGenderDetection()
@@ -178,7 +182,7 @@ export default function App() {
     setResults([])
   }
 
-  // Start camera when component mounts
+  // Start the camera when our component first loads
   useEffect(() => {
     console.log('Component mounted, starting camera...')
     startCamera()

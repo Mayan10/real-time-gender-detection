@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# scripts/train.py
+# A script to train our Vision Transformer model for gender classification
 
 import os
 import argparse
@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.utils import get_project_root
 
 class GenderDataset(Dataset):
-    """Dataset for gender classification"""
+    """Our custom dataset for gender classification"""
     def __init__(self, image_paths, labels, transform=None):
         self.image_paths = image_paths
         self.labels = labels
@@ -34,10 +34,10 @@ class GenderDataset(Dataset):
         img_path = self.image_paths[idx]
         label = self.labels[idx]
         
-        # Load image
+        # Load the image from disk
         image = Image.open(img_path).convert('RGB')
         
-        # Apply transformations
+        # Apply any transformations (like resizing, normalization, etc.)
         if self.transform:
             image = self.transform(image)
             
@@ -45,33 +45,33 @@ class GenderDataset(Dataset):
 
 def train_model(
     data_dir, 
-    batch_size=4,  # Reduced from 8 to 4
+    batch_size=4,  # Reduced from 8 to 4 to save memory
     num_epochs=20, 
     learning_rate=1e-4,
     output_dir=None,
     use_metal=True,
     use_cuda=True,
-    image_size=160,  # Reduced from 224 to 160
-    grad_accum_steps=8,  # Increased from 4 to 8
+    image_size=160,  # Reduced from 224 to 160 to save memory
+    grad_accum_steps=8,  # Increased from 4 to 8 to simulate larger batches
     model_size="base",  # Default to base since tiny might not be available
-    eval_every=2,  # Increased from 1 to 2
+    eval_every=2,  # Increased from 1 to 2 to save time
     save_every=5,
     early_stopping=3
 ):
     """
     Train the Vision Transformer model for gender classification with memory optimizations
     """
-    # Force garbage collection at the start
+    # Clean up memory at the start to give us a fresh slate
     gc.collect()
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
-    # For MPS devices, try to manage memory better
+    # For MPS devices (Apple Silicon), let's manage memory more carefully
     if platform.system() == 'Darwin':
-        # Set conservative memory limits for MPS
+        # Set conservative memory limits for MPS to avoid crashes
         os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.5'  # More conservative memory limit
         os.environ['PYTORCH_MPS_ALLOCATOR_POLICY'] = 'garbage_collection_conservative'
     
-    # Determine the device to use
+    # Figure out what device to use (GPU, Apple Silicon, or CPU)
     if platform.system() == 'Darwin' and use_metal and hasattr(torch, 'mps') and torch.backends.mps.is_available():
         device = torch.device('mps')
         print("Using Apple Metal (MPS) device for training")
@@ -83,9 +83,9 @@ def train_model(
         device = torch.device('cpu')
         print("Using CPU for training")
     
-    # Select model based on size
+    # Pick which model size to use
     if model_size == "tiny":
-        # ViT-tiny is not a standard HF model, use a known model instead
+        # ViT-tiny isn't a standard Hugging Face model, so let's use a known one instead
         model_name = "google/vit-base-patch16-224"
         print("ViT-tiny not available, using base model with reduced image size instead")
     elif model_size == "small":
@@ -96,7 +96,7 @@ def train_model(
     
     print(f"Using model: {model_name}")
     
-    # Initialize the ViT processor and model
+    # Load up the Vision Transformer model and processor
     try:
         processor = ViTImageProcessor.from_pretrained(model_name)
         model = ViTForImageClassification.from_pretrained(
@@ -122,21 +122,21 @@ def train_model(
             print(f"Fatal error loading any model: {e2}")
             raise
     
-    # Set up class names
+    # Set up our class names (male and female)
     id2label = {0: "Female", 1: "Male"}
     label2id = {"Female": 0, "Male": 1}
     model.config.id2label = id2label
     model.config.label2id = label2id
     
-    # Move model to device
+    # Move the model to our chosen device
     model.to(device)
     print(f"Model moved to {device}")
     
-    # Set up data directories
+    # Set up our data directories
     train_dir = os.path.join(data_dir, 'train')
     val_dir = os.path.join(data_dir, 'val')
     
-    # Set up data augmentation and preprocessing with reduced image size
+    # Set up data augmentation and preprocessing with reduced image size to save memory
     train_transform = transforms.Compose([
         transforms.RandomResizedCrop(image_size),
         transforms.RandomHorizontalFlip(),
@@ -151,10 +151,10 @@ def train_model(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    # Prepare dataset
+    # Prepare our datasets
     print("Preparing datasets...")
     
-    # Training dataset - limit the number of images for memory constraints if needed
+    # Training dataset - we can limit the number of images if memory is tight
     train_images = []
     train_labels = []
     
@@ -169,7 +169,7 @@ def train_model(
                     train_images.append(img_path)
                     train_labels.append(gender_label)
     
-    # For memory constraints, limit the training dataset size if needed
+    # For memory constraints, we can limit the training dataset size if needed
     max_train_samples = len(train_images)  # Use full dataset by default
     if max_train_samples < len(train_images):
         indices = np.random.choice(len(train_images), max_train_samples, replace=False)
@@ -192,7 +192,7 @@ def train_model(
                     val_images.append(img_path)
                     val_labels.append(gender_label)
     
-    # For memory constraints, limit the validation dataset size if needed
+    # For memory constraints, we can limit the validation dataset size if needed
     max_val_samples = len(val_images)  # Use full dataset by default
     if max_val_samples < len(val_images):
         indices = np.random.choice(len(val_images), max_val_samples, replace=False)
@@ -202,7 +202,7 @@ def train_model(
     
     print(f"Found {len(train_images)} training images and {len(val_images)} validation images")
     
-    # Create datasets
+    # Create our datasets
     train_dataset = GenderDataset(train_images, train_labels, train_transform)
     val_dataset = GenderDataset(val_images, val_labels, val_transform)
     
@@ -226,7 +226,7 @@ def train_model(
         pin_memory=False
     )
     
-    # Set up optimizer and loss function
+    # Set up our optimizer and loss function
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
     
@@ -246,7 +246,7 @@ def train_model(
     # Training loop
     print("Starting training...")
     
-    # Track metrics
+    # Track our metrics
     train_losses = []
     val_losses = []
     train_accs = []
@@ -260,7 +260,7 @@ def train_model(
         
     os.makedirs(output_dir, exist_ok=True)
     
-    # Try to resume from checkpoint
+    # Try to resume from checkpoint if we have one
     start_epoch = 0
     checkpoint_path = os.path.join(output_dir, "checkpoint.pth")
     if os.path.exists(checkpoint_path):
@@ -278,7 +278,7 @@ def train_model(
     for epoch in range(start_epoch, num_epochs):
         epoch_start_time = time.time()
         
-        # Force garbage collection before each epoch
+        # Clean up memory before each epoch
         gc.collect()
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
         
@@ -353,7 +353,7 @@ def train_model(
         
         # Only evaluate on validation set periodically to save time and memory
         if (epoch + 1) % eval_every == 0:
-            # Force garbage collection before validation
+            # Clean up memory before validation
             gc.collect()
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
             
@@ -399,90 +399,84 @@ def train_model(
                                 print("CUDA out of memory during validation. Collecting garbage...")
                                 torch.cuda.empty_cache()
                                 gc.collect()
+                            continue
                         else:
                             raise e
-            
-            epoch_val_loss = running_loss / len(val_dataset) if len(val_dataset) > 0 else float('inf')
-            epoch_val_acc = 100 * correct / total if total > 0 else 0
-            val_losses.append(epoch_val_loss)
-            val_accs.append(epoch_val_acc)
-            
-            # Early stopping check
-            if epoch_val_loss < best_val_loss:
-                best_val_loss = epoch_val_loss
-                patience_counter = 0
                 
-                # Save best model
-                torch.save(model.state_dict(), os.path.join(output_dir, "best_model.pth"))
-                print(f"  Saved best model with validation loss: {best_val_loss:.4f}")
-            else:
-                patience_counter += 1
-                print(f"  No improvement for {patience_counter} evaluations")
+                epoch_val_loss = running_loss / len(val_dataset)
+                epoch_val_acc = 100 * correct / total if total > 0 else 0
+                val_losses.append(epoch_val_loss)
+                val_accs.append(epoch_val_acc)
                 
-                if patience_counter >= early_stopping and early_stopping > 0:
-                    print(f"Early stopping triggered after {epoch+1} epochs")
-                    break
-        else:
-            # When skipping validation, just append the last value to keep lists aligned
-            if val_losses:
-                val_losses.append(val_losses[-1])
-                val_accs.append(val_accs[-1])
-            else:
-                val_losses.append(float('inf'))
-                val_accs.append(0.0)
-        
-        # Force garbage collection before saving
-        gc.collect()
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                print(f"Validation - Loss: {epoch_val_loss:.4f}, Acc: {epoch_val_acc:.2f}%")
+                
+                # Check if this is the best model so far
+                if epoch_val_loss < best_val_loss:
+                    best_val_loss = epoch_val_loss
+                    patience_counter = 0
+                    
+                    # Save the best model
+                    model.save_pretrained(output_dir)
+                    processor.save_pretrained(output_dir)
+                    print(f"New best model saved! Validation loss: {best_val_loss:.4f}")
+                else:
+                    patience_counter += 1
+                    print(f"No improvement for {patience_counter} evaluations")
         
         # Save checkpoint periodically
-        if (epoch + 1) % save_every == 0 or (epoch + 1) == num_epochs:
-            torch.save({
+        if (epoch + 1) % save_every == 0:
+            checkpoint = {
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': epoch_train_loss,
-                'val_loss': best_val_loss,
                 'best_val_loss': best_val_loss,
-            }, checkpoint_path)
-            print(f"  Checkpoint saved at epoch {epoch+1}")
+                'train_losses': train_losses,
+                'val_losses': val_losses,
+                'train_accs': train_accs,
+                'val_accs': val_accs
+            }
+            torch.save(checkpoint, checkpoint_path)
+            print(f"Checkpoint saved at epoch {epoch + 1}")
         
-        # Print epoch summary
+        # Early stopping
+        if patience_counter >= early_stopping:
+            print(f"Early stopping triggered after {patience_counter} evaluations without improvement")
+            break
+        
         epoch_time = time.time() - epoch_start_time
-        print(f"Epoch {epoch+1}/{num_epochs} completed in {epoch_time:.2f}s")
-        print(f"  Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_acc:.2f}%")
-        
-        if (epoch + 1) % eval_every == 0:
-            print(f"  Val Loss: {epoch_val_loss:.4f}, Val Acc: {epoch_val_acc:.2f}%")
+        print(f"Epoch {epoch + 1} completed in {epoch_time:.2f}s - Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_acc:.2f}%")
     
     # Save final model
-    torch.save(model.state_dict(), os.path.join(output_dir, "final_model.pth"))
-    print(f"Training completed. Final model saved to {os.path.join(output_dir, 'final_model.pth')}")
+    model.save_pretrained(output_dir)
+    processor.save_pretrained(output_dir)
+    print(f"Training completed! Final model saved to {output_dir}")
     
     # Plot training curves
-    plt.figure(figsize=(12, 5))
+    plt.figure(figsize=(12, 4))
     
     plt.subplot(1, 2, 1)
-    plt.plot(train_losses, label='Train')
-    plt.plot(val_losses, label='Validation')
-    plt.title('Loss')
+    plt.plot(train_losses, label='Train Loss')
+    if val_losses:
+        plt.plot(range(0, len(val_losses) * eval_every, eval_every), val_losses, label='Val Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
+    plt.title('Training and Validation Loss')
     
     plt.subplot(1, 2, 2)
-    plt.plot(train_accs, label='Train')
-    plt.plot(val_accs, label='Validation')
-    plt.title('Accuracy')
+    plt.plot(train_accs, label='Train Acc')
+    if val_accs:
+        plt.plot(range(0, len(val_accs) * eval_every, eval_every), val_accs, label='Val Acc')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy (%)')
     plt.legend()
+    plt.title('Training and Validation Accuracy')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "training_curves.png"))
+    plt.savefig(os.path.join(output_dir, 'training_curves.png'))
     plt.show()
     
-    return model
+    return model, processor
 
 def main():
     parser = argparse.ArgumentParser(description="Train Vision Transformer for gender classification with memory optimizations")
@@ -536,54 +530,55 @@ def main():
     )
     parser.add_argument(
         "--model-size", type=str, default="base", choices=["tiny", "small", "base"],
-        help="ViT model size (default: base)"
+        help="Model size to use (default: base)"
     )
     parser.add_argument(
-        "--eval-every", type=int, default=2,  # Increased from 1 to 2
-        help="Run validation every N epochs (default: 2)"
+        "--eval-every", type=int, default=2,
+        help="Evaluate on validation set every N epochs (default: 2)"
     )
     parser.add_argument(
-        "--save-every", type=int, default=5, 
+        "--save-every", type=int, default=5,
         help="Save checkpoint every N epochs (default: 5)"
     )
     parser.add_argument(
         "--early-stopping", type=int, default=3,
-        help="Stop training if no improvement after N evaluations (default: 3, 0 to disable)"
+        help="Early stopping patience (default: 3)"
     )
     
     args = parser.parse_args()
     
-    # If --cpu is specified, override metal and cuda flags
+    # Override device selection if CPU is forced
     if args.cpu:
         args.metal = False
         args.cuda = False
     
-    try:
-        train_model(
-            data_dir=args.data,
-            batch_size=args.batch_size,
-            num_epochs=args.epochs,
-            learning_rate=args.lr,
-            output_dir=args.output,
-            use_metal=args.metal,
-            use_cuda=args.cuda,
-            image_size=args.image_size,
-            grad_accum_steps=args.grad_accum,
-            model_size=args.model_size,
-            eval_every=args.eval_every,
-            save_every=args.save_every,
-            early_stopping=args.early_stopping
-        )
-    except KeyboardInterrupt:
-        print("Training interrupted by user")
-        return 0
-    except Exception as e:
-        print(f"Error during training: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+    print("Starting gender classification training...")
+    print(f"Data directory: {args.data}")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Learning rate: {args.lr}")
+    print(f"Image size: {args.image_size}")
+    print(f"Gradient accumulation steps: {args.grad_accum}")
+    print(f"Model size: {args.model_size}")
     
-    return 0
+    # Train the model
+    model, processor = train_model(
+        data_dir=args.data,
+        batch_size=args.batch_size,
+        num_epochs=args.epochs,
+        learning_rate=args.lr,
+        output_dir=args.output,
+        use_metal=args.metal,
+        use_cuda=args.cuda,
+        image_size=args.image_size,
+        grad_accum_steps=args.grad_accum,
+        model_size=args.model_size,
+        eval_every=args.eval_every,
+        save_every=args.save_every,
+        early_stopping=args.early_stopping
+    )
+    
+    print("Training completed successfully!")
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# server.py
+# Our main Flask server that handles gender detection requests
 
 from flask import Flask, request, jsonify, Response, send_from_directory, render_template_string
 from flask_cors import CORS
@@ -15,7 +15,7 @@ import torch
 from transformers import ViTForImageClassification, ViTImageProcessor
 import base64
 
-# Configure logging
+# Let's set up logging so we can see what's happening
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -23,76 +23,79 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-# Configure CORS to allow all origins
+# Allow any frontend to talk to our API (for development and deployment flexibility)
 CORS(app, resources={r"/*": {"origins": "*", "allow_headers": "*", "methods": ["GET", "POST", "OPTIONS"]}})
 
-# Initialize models
+# Load up our AI models - this is where the magic happens!
 try:
-    # Load YOLOv4 model
+    # First, let's load YOLOv4 to detect people in images
     weights_path = 'models/yolov4.weights'
     config_path = 'models/yolov4.cfg'
     
+    # If the model files aren't here, let's download them automatically
     if not os.path.exists(weights_path) or not os.path.exists(config_path):
-        logger.info("Downloading YOLOv4 model files...")
+        logger.info("Hey! I need to download the YOLOv4 model files first...")
         import urllib.request
-        # Download YOLOv4 weights
+        # Grab the YOLOv4 weights (this is the big file with all the learned knowledge)
         url = "https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v3_optimal/yolov4.weights"
         urllib.request.urlretrieve(url, weights_path)
-        # Download YOLOv4 config
+        # And the configuration file that tells us how to use it
         url = "https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4.cfg"
         urllib.request.urlretrieve(url, config_path)
     
+    # Now let's load the YOLO network into OpenCV
     yolo = cv2.dnn.readNetFromDarknet(config_path, weights_path)
     layer_names = yolo.getLayerNames()
     output_layers = [layer_names[i - 1] for i in yolo.getUnconnectedOutLayers()]
-    person_class_id = 0  # In COCO dataset, person is class 0
-    logger.info("YOLOv4 model loaded successfully")
+    person_class_id = 0  # In the COCO dataset, people are class 0
+    logger.info("Great! YOLOv4 model is loaded and ready to detect people")
     
-    # Load Vision Transformer model
+    # Now let's load the Vision Transformer for gender classification
     vit_processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
     vit_model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
     
-    # Modify the classification head for binary gender classification
-    num_labels = 2  # Male and Female
+    # We need to modify the model to classify just two things: male and female
+    num_labels = 2  # Just two options: male and female
     vit_model.classifier = torch.nn.Linear(vit_model.config.hidden_size, num_labels)
     
-    # Set up class names
+    # Set up our class names so we know what the model is predicting
     id2label = {0: "Female", 1: "Male"}
     label2id = {"Female": 0, "Male": 1}
     
-    # Move model to device
+    # Move the model to GPU if available, otherwise use CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     vit_model.to(device)
     vit_model.eval()
-    logger.info("Vision Transformer model loaded successfully")
-    logger.warning("NOTE: This model needs to be fine-tuned for gender classification to work properly.")
+    logger.info("Awesome! Vision Transformer model is loaded and ready to classify gender")
+    logger.warning("Heads up: This model needs to be fine-tuned for gender classification to work properly.")
     
 except Exception as e:
-    logger.error(f"Error loading models: {str(e)}")
+    logger.error(f"Oops! Something went wrong loading the models: {str(e)}")
     logger.error(traceback.format_exc())
     yolo = None
     vit_model = None
 
 def detect_persons(img):
+    """Find all the people in an image using YOLOv4"""
     try:
         height, width = img.shape[:2]
         
-        # Create a blob from the image
+        # Prepare the image for YOLO by creating a blob (this is how YOLO likes its input)
         blob = cv2.dnn.blobFromImage(
             img, 
-            1/255.0, 
-            (416, 416), 
-            swapRB=True, 
+            1/255.0,  # Scale the pixel values down
+            (416, 416),  # Resize to YOLO's preferred size
+            swapRB=True,  # Convert BGR to RGB
             crop=False
         )
         
-        # Set the input to the network
+        # Feed the image through the YOLO network
         yolo.setInput(blob)
         
-        # Forward pass
+        # Get the detection results
         outputs = yolo.forward(output_layers)
         
-        # Process detections
+        # Process what YOLO found
         boxes = []
         confidences = []
         
@@ -102,14 +105,15 @@ def detect_persons(img):
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 
-                # Filter for persons with confidence above threshold
+                # Only keep detections of people with good confidence
                 if class_id == person_class_id and confidence > 0.5:
+                    # Convert YOLO's center coordinates to corner coordinates
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
                     w = int(detection[2] * width)
                     h = int(detection[3] * height)
                     
-                    # Calculate corner coordinates
+                    # Calculate the top-left corner
                     x = int(center_x - w / 2)
                     y = int(center_y - h / 2)
                     
@@ -118,25 +122,26 @@ def detect_persons(img):
                     
         return boxes, confidences
     except Exception as e:
-        logger.error(f"Error in detect_persons: {str(e)}")
+        logger.error(f"Something went wrong detecting people: {str(e)}")
         logger.error(traceback.format_exc())
         return [], []
 
 def classify_gender(img, boxes):
+    """Figure out the gender of each person we detected"""
     try:
         results = []
         
         if not boxes:
             return results
         
-        # Prepare batch of cropped person images
+        # Get ready to process each person we found
         person_images = []
         valid_boxes = []
         
         for box in boxes:
             x, y, w, h = box
             
-            # Ensure coordinates are within frame boundaries
+            # Make sure we don't go outside the image boundaries
             x = max(0, x)
             y = max(0, y)
             w = min(w, img.shape[1] - x)
@@ -145,10 +150,10 @@ def classify_gender(img, boxes):
             if w <= 0 or h <= 0:
                 continue
                 
-            # Crop person from frame
+            # Cut out just the person from the image
             person_crop = img[y:y+h, x:x+w]
             
-            # Convert to PIL Image
+            # Convert to the format the Vision Transformer expects
             pil_image = Image.fromarray(cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB))
             
             person_images.append(pil_image)
@@ -157,15 +162,16 @@ def classify_gender(img, boxes):
         if not person_images:
             return results
             
-        # Process all images in batch
+        # Process all the people at once (this is faster than one by one)
         inputs = vit_processor(person_images, return_tensors="pt").to(device)
         
+        # Get the gender predictions
         with torch.no_grad():
             outputs = vit_model(**inputs)
             probs = torch.softmax(outputs.logits, dim=1)
             predictions = torch.argmax(probs, dim=1)
         
-        # Process results
+        # Package up the results nicely
         for i, (box, prediction, prob) in enumerate(zip(valid_boxes, predictions, probs)):
             x, y, w, h = box
             gender = id2label[prediction.item()]
@@ -179,23 +185,24 @@ def classify_gender(img, boxes):
         
         return results
     except Exception as e:
-        logger.error(f"Error in classify_gender: {str(e)}")
+        logger.error(f"Something went wrong classifying gender: {str(e)}")
         logger.error(traceback.format_exc())
         return []
 
 @app.route('/')
 def index():
+    """Serve our simple HTML interface"""
     try:
         with open('camera.html', 'r') as file:
             html_content = file.read()
         return html_content
     except Exception as e:
-        logger.error(f"Error serving camera.html: {str(e)}")
+        logger.error(f"Couldn't load the camera interface: {str(e)}")
         return "Error loading camera interface. Please check server logs."
 
 @app.route('/health')
 def health():
-    """Health check endpoint for monitoring"""
+    """Let's check if everything is working properly"""
     return jsonify({
         "status": "healthy",
         "models_loaded": yolo is not None and vit_model is not None,
@@ -204,48 +211,51 @@ def health():
 
 @app.route('/test', methods=['GET'])
 def test():
+    """Simple test to make sure the API is responding"""
     return jsonify({"status": "ok", "message": "API is working"}), 200
 
 @app.route('/api/detect', methods=['POST', 'OPTIONS'])
 def detect_gender():
+    """The main endpoint that processes images and detects gender"""
     if request.method == 'OPTIONS':
         return '', 204
         
     request_time = time.strftime('%Y-%m-%d %H:%M:%S')
-    logger.info(f"[{request_time}] New detection request received")
+    logger.info(f"[{request_time}] Someone sent us an image to analyze!")
     
     if 'image' not in request.files:
-        logger.warning("No image file in request")
+        logger.warning("They forgot to include an image!")
         return jsonify({'error': 'No image provided'}), 400
     
     try:
         file = request.files['image']
-        logger.info(f"Received image file: {file.filename}")
+        logger.info(f"Got an image file: {file.filename}")
         
-        # Convert image file to OpenCV format
+        # Convert the uploaded image to a format we can work with
         img = Image.open(file.stream)
         img = np.array(img)
         logger.info(f"Image converted to array, shape: {img.shape}")
         
+        # OpenCV likes BGR format, so let's convert it
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         logger.info("Image converted to BGR format")
         
         if yolo is None or vit_model is None:
-            logger.error("Models not loaded")
+            logger.error("Our models aren't loaded yet!")
             return jsonify({'error': 'Models not available'}), 500
         
-        # Detect persons
-        logger.info("Starting person detection...")
+        # Step 1: Find all the people in the image
+        logger.info("Looking for people in the image...")
         boxes, confidences = detect_persons(img)
-        logger.info(f"Person detection completed. Found {len(boxes)} persons")
+        logger.info(f"Found {len(boxes)} people in the image")
         
         if len(boxes) > 0:
-            # Classify gender for each person
-            logger.info("Starting gender classification...")
+            # Step 2: Figure out the gender of each person
+            logger.info("Now let's figure out everyone's gender...")
             results = classify_gender(img, boxes)
-            logger.info(f"Gender classification completed. Results: {results}")
+            logger.info(f"Gender classification done! Results: {results}")
             
-            # Format results
+            # Format the results nicely for the frontend
             formatted_results = []
             for result in results:
                 x, y, w, h = result["box"]
@@ -268,7 +278,7 @@ def detect_gender():
             })
             
     except Exception as e:
-        error_msg = f"Error processing image: {str(e)}"
+        error_msg = f"Something went wrong processing the image: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
         return jsonify({
@@ -278,11 +288,12 @@ def detect_gender():
 
 @app.route('/api/camera')
 def camera_stream():
+    """Stream live camera feed with detection overlays"""
     try:
-        # Initialize camera
-        cap = cv2.VideoCapture(0)  # Try default camera
+        # Try to open the camera
+        cap = cv2.VideoCapture(0)  # Start with the default camera
         if not cap.isOpened():
-            # If default camera fails, try alternative camera index
+            # If that doesn't work, try the next camera
             cap = cv2.VideoCapture(1)
             if not cap.isOpened():
                 return jsonify({'error': 'Could not open camera'}), 500
@@ -293,18 +304,18 @@ def camera_stream():
                 if not ret:
                     break
 
-                # Detect persons
+                # Find people in this frame
                 boxes, confidences = detect_persons(frame)
                 
-                # Draw boxes and labels
+                # Draw boxes around the people we found
                 for box in boxes:
                     x, y, w, h = box
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 
-                # Classify gender for each person
+                # Figure out everyone's gender
                 results = classify_gender(frame, boxes)
                 
-                # Draw gender labels
+                # Add gender labels to the image
                 for result in results:
                     x, y, w, h = result["box"]
                     gender = result["gender"]
@@ -313,33 +324,33 @@ def camera_stream():
                     cv2.putText(frame, label, (x, y - 10), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                # Encode the frame in JPEG format
+                # Convert the frame to JPEG format for streaming
                 ret, buffer = cv2.imencode('.jpg', frame)
                 if not ret:
                     continue
                     
-                # Convert to bytes and yield
+                # Send the frame to the browser
                 frame_bytes = buffer.tobytes()
                 yield (b'--frame\r\n'
                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-                # Small delay to control frame rate
-                time.sleep(0.03)  # Approximately 30 FPS
+                # Take a small break to control the frame rate
+                time.sleep(0.03)  # About 30 frames per second
 
         return Response(generate(),
                       mimetype='multipart/x-mixed-replace; boundary=frame')
 
     except Exception as e:
-        logger.error(f"Error in camera stream: {str(e)}")
+        logger.error(f"Something went wrong with the camera stream: {str(e)}")
         logger.error(traceback.format_exc())
         if 'cap' in locals():
             cap.release()
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info("Starting Gender Detection API server...")
+    logger.info("Starting up our Gender Detection API server...")
     
-    # Get port from environment variable (for production deployment)
+    # Get the port from environment variable (useful for deployment)
     port = int(os.environ.get('PORT', 5001))
     
     # Set debug mode based on environment
